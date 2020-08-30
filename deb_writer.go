@@ -77,7 +77,7 @@ func (w *Writer) Write(b []byte) (int, error) {
 	return w.tarWriter.Write(b)
 }
 
-func (w *Writer) Close() error {
+func (w *Writer) WriteToDeb(data []byte, lenght int64) error {
 	err := w.close()
 	if err != nil {
 		return fmt.Errorf("writer close %w", err)
@@ -93,6 +93,14 @@ func (w *Writer) Close() error {
 	_, err = w.arWriter.Write([]byte("2.0\n"))
 	if err != nil {
 		return fmt.Errorf("write debian-binary data")
+	}
+	err = w.arWriter.WriteHeader(&ar.Header{Name: "sign", ModTime: time.Now(), Mode: 0655, Size: lenght})
+	if err != nil {
+		return fmt.Errorf("write sign header")
+	}
+	_, err = w.arWriter.Write(data)
+	if err != nil {
+		return fmt.Errorf("write sign  data")
 	}
 	for _, f := range []*os.File{w.controlFile, w.dataFile} {
 		err = f.Close()

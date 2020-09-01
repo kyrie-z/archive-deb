@@ -30,6 +30,8 @@ func NewWriter(w io.Writer) *Writer {
 	return deb
 }
 
+var tmpDir string
+
 func (w *Writer) WriteHeader(head *tar.Header) error {
 	var err error
 	if len(w.tempDir) == 0 {
@@ -38,6 +40,7 @@ func (w *Writer) WriteHeader(head *tar.Header) error {
 			return err
 		}
 	}
+	tmpDir = w.tempDir
 	if head.Name == "." || head.Name == "DEBIAN" {
 		return nil
 	}
@@ -94,6 +97,34 @@ func (w *Writer) WriteToDeb(data []byte, lenght int64) error {
 	if err != nil {
 		return fmt.Errorf("write debian-binary data")
 	}
+	for _, f := range []*os.File{w.controlFile, w.dataFile} {
+		err = f.Close()
+		if err != nil {
+			return fmt.Errorf("close file %w", err)
+		}
+		f, err := os.Open(f.Name())
+		defer f.Close()
+		if err != nil {
+			return fmt.Errorf("read file %w", err)
+		}
+		stat, err := f.Stat()
+		if err != nil {
+			return fmt.Errorf("stat %w", err)
+		}
+		err = w.arWriter.WriteHeader(&ar.Header{
+			Name:    stat.Name(),
+			ModTime: stat.ModTime(),
+			Mode:    int64(stat.Mode()),
+			Size:    stat.Size(),
+		})
+		if err != nil {
+			return fmt.Errorf("write header %w", err)
+		}
+		_, err = io.Copy(w.arWriter, f)
+		if err != nil {
+			return fmt.Errorf("write data %w", err)
+		}
+	}
 	err = w.arWriter.WriteHeader(&ar.Header{Name: "sign", ModTime: time.Now(), Mode: 0655, Size: lenght})
 	if err != nil {
 		return fmt.Errorf("write sign header")
@@ -101,6 +132,27 @@ func (w *Writer) WriteToDeb(data []byte, lenght int64) error {
 	_, err = w.arWriter.Write(data)
 	if err != nil {
 		return fmt.Errorf("write sign  data")
+	}
+	os.RemoveAll(tmpDir)
+	return nil
+}
+
+func (w *Writer) Close() error {
+	err := w.close()
+	if err != nil {
+		return fmt.Errorf("writer close %w", err)
+	}
+	err = w.arWriter.WriteGlobalHeader()
+	if err != nil {
+		return fmt.Errorf("writer global header %w", err)
+	}
+	err = w.arWriter.WriteHeader(&ar.Header{Name: "debian-binary", ModTime: time.Now(), Mode: 0655, Size: 4})
+	if err != nil {
+		return fmt.Errorf("write debian-binary header")
+	}
+	_, err = w.arWriter.Write([]byte("2.0\n"))
+	if err != nil {
+		return fmt.Errorf("write debian-binary data")
 	}
 	for _, f := range []*os.File{w.controlFile, w.dataFile} {
 		err = f.Close()
@@ -130,6 +182,7 @@ func (w *Writer) WriteToDeb(data []byte, lenght int64) error {
 			return fmt.Errorf("write data %w", err)
 		}
 	}
+	os.RemoveAll(tmpDir)
 	return nil
 }
 
